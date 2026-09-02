@@ -43,6 +43,9 @@ const app = {
   plans: { A: createBlankPlan(), B: createBlankPlan() },
   dragging: null,
   didDrag: false,
+  editMode: false,
+  addPointMode: false,
+  activePointIndex: null,
 };
 
 let nextId = Date.now();
@@ -75,6 +78,7 @@ function restoreSnapshot(serialized) {
   plan.background = data.background;
   plan.shapes = data.shapes;
   plan.selectedId = null;
+  exitShapeEditing(false);
   document.querySelector("#backgroundPicker").value = plan.background;
   render();
   updateInspector();
@@ -95,10 +99,64 @@ function redo() {
   restoreSnapshot(plan.future.pop());
 }
 
+function defaultGeometry(type) {
+  switch (type) {
+    case "circle":
+      return {
+        smooth: true,
+        points: Array.from({ length: 8 }, (_, index) => {
+          const angle = -Math.PI / 2 + (index * Math.PI * 2) / 8;
+          return { x: Math.cos(angle) * 100, y: Math.sin(angle) * 100 };
+        }),
+      };
+    case "square":
+      return {
+        smooth: false,
+        points: [
+          { x: -100, y: -100 }, { x: 100, y: -100 },
+          { x: 100, y: 100 }, { x: -100, y: 100 },
+        ],
+      };
+    case "triangle":
+      return {
+        smooth: false,
+        points: [{ x: 0, y: -115 }, { x: 106, y: 82 }, { x: -106, y: 82 }],
+      };
+    case "line":
+      return {
+        smooth: false,
+        points: [
+          { x: -165, y: -24 }, { x: 165, y: -24 },
+          { x: 165, y: 24 }, { x: -165, y: 24 },
+        ],
+      };
+    case "blob":
+    default:
+      return {
+        smooth: true,
+        points: [
+          { x: -84, y: -72 }, { x: -20, y: -116 }, { x: 72, y: -85 },
+          { x: 92, y: -22 }, { x: 68, y: 54 }, { x: -18, y: 90 },
+          { x: -95, y: 45 },
+        ],
+      };
+  }
+}
+
+function ensureShapeGeometry(shape) {
+  if (!Array.isArray(shape.points) || shape.points.length < 3) {
+    const geometry = defaultGeometry(shape.type);
+    shape.points = geometry.points;
+    shape.smooth = geometry.smooth;
+  }
+  if (typeof shape.smooth !== "boolean") shape.smooth = defaultGeometry(shape.type).smooth;
+  return shape;
+}
+
 function makeShape(type) {
   const offsets = [-90, -45, 0, 45, 90];
   const offset = offsets[activePlan().shapes.length % offsets.length];
-  return {
+  const shape = {
     id: uid(),
     type,
     x: 500 + offset,
@@ -108,9 +166,11 @@ function makeShape(type) {
     color: app.color,
     opacity: 1,
   };
+  return ensureShapeGeometry(shape);
 }
 
 function addShape(type) {
+  if (app.editMode) exitShapeEditing(false);
   pushHistory();
   const shape = makeShape(type);
   activePlan().shapes.push(shape);
@@ -126,44 +186,32 @@ function getSelectedShape() {
   return plan.shapes.find((shape) => shape.id === plan.selectedId) || null;
 }
 
-function roundedBlobPath(context) {
-  context.beginPath();
-  context.moveTo(-.65, -.55);
-  context.bezierCurveTo(-.15, -.95, .55, -.72, .68, -.18);
-  context.bezierCurveTo(.88, .36, .32, .78, -.14, .69);
-  context.bezierCurveTo(-.72, .82, -.92, .18, -.65, -.55);
-  context.closePath();
-}
-
 function shapePath(context, shape) {
-  const base = shape.type === "line" ? 165 : 100;
-  switch (shape.type) {
-    case "circle":
-      context.beginPath();
-      context.arc(0, 0, base, 0, Math.PI * 2);
-      break;
-    case "square":
-      context.beginPath();
-      context.rect(-base, -base, base * 2, base * 2);
-      break;
-    case "triangle":
-      context.beginPath();
-      context.moveTo(0, -base * 1.15);
-      context.lineTo(base * 1.06, base * .82);
-      context.lineTo(-base * 1.06, base * .82);
-      context.closePath();
-      break;
-    case "line":
-      context.beginPath();
-      context.roundRect(-base, -24, base * 2, 48, 24);
-      break;
-    case "blob":
-      context.save();
-      context.scale(base * 1.3, base * 1.3);
-      roundedBlobPath(context);
-      context.restore();
-      break;
+  ensureShapeGeometry(shape);
+  const points = shape.points;
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+
+  if (shape.smooth && points.length > 2) {
+    const count = points.length;
+    for (let index = 0; index < count; index += 1) {
+      const previous = points[(index - 1 + count) % count];
+      const current = points[index];
+      const next = points[(index + 1) % count];
+      const afterNext = points[(index + 2) % count];
+      context.bezierCurveTo(
+        current.x + (next.x - previous.x) / 6,
+        current.y + (next.y - previous.y) / 6,
+        next.x - (afterNext.x - current.x) / 6,
+        next.y - (afterNext.y - current.y) / 6,
+        next.x,
+        next.y,
+      );
+    }
+  } else {
+    points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
   }
+  context.closePath();
 }
 
 function drawShape(context, shape, selected = false) {
@@ -186,6 +234,56 @@ function drawShape(context, shape, selected = false) {
   context.restore();
 }
 
+function localToWorld(shape, point) {
+  const scale = shape.size / 100;
+  const angle = (shape.rotation * Math.PI) / 180;
+  const scaledX = point.x * scale;
+  const scaledY = point.y * scale;
+  return {
+    x: shape.x + scaledX * Math.cos(angle) - scaledY * Math.sin(angle),
+    y: shape.y + scaledX * Math.sin(angle) + scaledY * Math.cos(angle),
+  };
+}
+
+function worldToLocal(shape, point) {
+  const scale = shape.size / 100;
+  const dx = point.x - shape.x;
+  const dy = point.y - shape.y;
+  const angle = (-shape.rotation * Math.PI) / 180;
+  return {
+    x: (dx * Math.cos(angle) - dy * Math.sin(angle)) / scale,
+    y: (dx * Math.sin(angle) + dy * Math.cos(angle)) / scale,
+  };
+}
+
+function drawEditHandles(context, shape) {
+  ensureShapeGeometry(shape);
+  const worldPoints = shape.points.map((point) => localToWorld(shape, point));
+
+  context.save();
+  context.beginPath();
+  context.moveTo(worldPoints[0].x, worldPoints[0].y);
+  worldPoints.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+  context.closePath();
+  context.strokeStyle = "rgba(36, 87, 214, .65)";
+  context.lineWidth = 3;
+  context.setLineDash([8, 7]);
+  context.stroke();
+  context.setLineDash([]);
+
+  worldPoints.forEach((point, index) => {
+    const active = index === app.activePointIndex;
+    context.beginPath();
+    context.arc(point.x, point.y, active ? 18 : 15, 0, Math.PI * 2);
+    context.fillStyle = active ? "#ffd84a" : "#ffffff";
+    context.fill();
+    context.strokeStyle = active ? "#17213d" : "#2457d6";
+    context.lineWidth = active ? 6 : 5;
+    context.stroke();
+  });
+  context.restore();
+}
+
 function drawPlan(targetContext, plan, showSelection = false) {
   targetContext.save();
   targetContext.clearRect(0, 0, 1000, 1000);
@@ -197,6 +295,7 @@ function drawPlan(targetContext, plan, showSelection = false) {
 
 function render() {
   drawPlan(ctx, activePlan(), true);
+  if (app.editMode && getSelectedShape()) drawEditHandles(ctx, getSelectedShape());
   document.querySelector("#undoButton").disabled = activePlan().history.length === 0;
   document.querySelector("#redoButton").disabled = activePlan().future.length === 0;
 }
@@ -213,27 +312,104 @@ function hitTest(point) {
   const shapes = activePlan().shapes;
   for (let index = shapes.length - 1; index >= 0; index -= 1) {
     const shape = shapes[index];
-    const dx = point.x - shape.x;
-    const dy = point.y - shape.y;
-    const angle = (-shape.rotation * Math.PI) / 180;
-    const localX = (dx * Math.cos(angle) - dy * Math.sin(angle)) / (shape.size / 100);
-    const localY = (dx * Math.sin(angle) + dy * Math.cos(angle)) / (shape.size / 100);
+    const local = worldToLocal(shape, point);
     const hitCtx = document.createElement("canvas").getContext("2d");
     shapePath(hitCtx, shape);
-    if (hitCtx.isPointInPath(localX, localY)) return shape;
+    if (hitCtx.isPointInPath(local.x, local.y)) return shape;
   }
   return null;
+}
+
+function hitControlPoint(shape, point) {
+  ensureShapeGeometry(shape);
+  let closestIndex = -1;
+  let closestDistance = 30;
+  shape.points.forEach((controlPoint, index) => {
+    const world = localToWorld(shape, controlPoint);
+    const distance = Math.hypot(point.x - world.x, point.y - world.y);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+  return closestIndex;
+}
+
+function closestSegment(points, target) {
+  let best = { index: -1, distance: Infinity, point: null };
+  points.forEach((start, index) => {
+    const end = points[(index + 1) % points.length];
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy || 1;
+    const amount = Math.max(0, Math.min(1, ((target.x - start.x) * dx + (target.y - start.y) * dy) / lengthSquared));
+    const projected = { x: start.x + dx * amount, y: start.y + dy * amount };
+    const distance = Math.hypot(target.x - projected.x, target.y - projected.y);
+    if (distance < best.distance) best = { index, distance, point: target };
+  });
+  return best;
+}
+
+function tryAddPoint(shape, worldPoint) {
+  const local = worldToLocal(shape, worldPoint);
+  const closest = closestSegment(shape.points, local);
+  const allowedDistance = 55 / (shape.size / 100);
+  if (closest.index < 0 || closest.distance > allowedDistance) {
+    showToast("形のふちをタップしてください");
+    return false;
+  }
+  pushHistory();
+  shape.points.splice(closest.index + 1, 0, {
+    x: Math.round(closest.point.x),
+    y: Math.round(closest.point.y),
+  });
+  app.activePointIndex = closest.index + 1;
+  app.addPointMode = false;
+  updateEditUI();
+  render();
+  scheduleSave();
+  showToast("新しい点を追加しました");
+  return true;
 }
 
 function pointerDown(event) {
   event.preventDefault();
   const point = canvasPoint(event);
+
+  if (app.editMode) {
+    const editedShape = getSelectedShape();
+    if (!editedShape) {
+      exitShapeEditing();
+      return;
+    }
+    const pointIndex = hitControlPoint(editedShape, point);
+    if (pointIndex >= 0) {
+      app.activePointIndex = pointIndex;
+      app.didDrag = false;
+      pushHistory();
+      app.dragging = { mode: "point", id: editedShape.id, pointIndex };
+      canvas.setPointerCapture(event.pointerId);
+      canvas.classList.add("dragging");
+      updateEditUI();
+      render();
+      return;
+    }
+    if (app.addPointMode) {
+      tryAddPoint(editedShape, point);
+      return;
+    }
+    app.activePointIndex = null;
+    updateEditUI();
+    render();
+    return;
+  }
+
   const shape = hitTest(point);
   activePlan().selectedId = shape?.id || null;
   app.didDrag = false;
   if (shape) {
     pushHistory();
-    app.dragging = { id: shape.id, offsetX: point.x - shape.x, offsetY: point.y - shape.y };
+    app.dragging = { mode: "shape", id: shape.id, offsetX: point.x - shape.x, offsetY: point.y - shape.y };
     canvas.setPointerCapture(event.pointerId);
     canvas.classList.add("dragging");
   }
@@ -247,8 +423,18 @@ function pointerMove(event) {
   const shape = getSelectedShape();
   if (!shape) return;
   const point = canvasPoint(event);
-  shape.x = Math.max(-150, Math.min(1150, point.x - app.dragging.offsetX));
-  shape.y = Math.max(-150, Math.min(1150, point.y - app.dragging.offsetY));
+
+  if (app.dragging.mode === "point") {
+    const local = worldToLocal(shape, point);
+    shape.points[app.dragging.pointIndex] = {
+      x: Math.max(-320, Math.min(320, local.x)),
+      y: Math.max(-320, Math.min(320, local.y)),
+    };
+    app.activePointIndex = app.dragging.pointIndex;
+  } else {
+    shape.x = Math.max(-150, Math.min(1150, point.x - app.dragging.offsetX));
+    shape.y = Math.max(-150, Math.min(1150, point.y - app.dragging.offsetY));
+  }
   app.didDrag = true;
   render();
 }
@@ -261,6 +447,89 @@ function pointerUp(event) {
   if (!app.didDrag) activePlan().history.pop();
   scheduleSave();
   render();
+}
+
+function enterShapeEditing() {
+  const shape = getSelectedShape();
+  if (!shape) return;
+  ensureShapeGeometry(shape);
+  app.editMode = true;
+  app.addPointMode = false;
+  app.activePointIndex = null;
+  updateEditUI();
+  render();
+}
+
+function exitShapeEditing(shouldRender = true) {
+  app.editMode = false;
+  app.addPointMode = false;
+  app.activePointIndex = null;
+  updateEditUI();
+  if (shouldRender) render();
+}
+
+function updateEditUI() {
+  const shape = getSelectedShape();
+  const tools = document.querySelector("#shapeEditTools");
+  const editButton = document.querySelector("#editShapeButton");
+  const label = document.querySelector("#editModeLabel");
+  const tip = document.querySelector("#canvasTip");
+  if (!tools || !editButton || !label || !tip) return;
+
+  tools.hidden = !app.editMode;
+  editButton.hidden = app.editMode;
+  label.hidden = !app.editMode;
+  document.querySelector("#smoothButton").classList.toggle("active", Boolean(shape?.smooth));
+  document.querySelector("#angularButton").classList.toggle("active", Boolean(shape && !shape.smooth));
+  document.querySelector("#addPointButton").classList.toggle("active", app.addPointMode);
+  document.querySelector("#deletePointButton").disabled = app.activePointIndex === null || (shape?.points.length || 0) <= 3;
+
+  if (app.editMode) {
+    tip.textContent = app.addPointMode
+      ? "形のふちをタップすると点が増えます"
+      : "青い点を指で引っぱって形を変えよう";
+    tip.classList.remove("hidden");
+  } else {
+    tip.textContent = "形をタップして追加し、指で動かせます";
+    tip.classList.toggle("hidden", activePlan().shapes.length > 0);
+  }
+}
+
+function setEdgeStyle(smooth) {
+  const shape = getSelectedShape();
+  if (!shape || shape.smooth === smooth) return;
+  pushHistory();
+  shape.smooth = smooth;
+  updateEditUI();
+  render();
+  scheduleSave();
+}
+
+function deleteActivePoint() {
+  const shape = getSelectedShape();
+  if (!shape || app.activePointIndex === null || shape.points.length <= 3) return;
+  pushHistory();
+  shape.points.splice(app.activePointIndex, 1);
+  app.activePointIndex = null;
+  updateEditUI();
+  render();
+  scheduleSave();
+  showToast("点を1つ消しました");
+}
+
+function resetSelectedShape() {
+  const shape = getSelectedShape();
+  if (!shape) return;
+  pushHistory();
+  const geometry = defaultGeometry(shape.type);
+  shape.points = geometry.points;
+  shape.smooth = geometry.smooth;
+  app.activePointIndex = null;
+  app.addPointMode = false;
+  updateEditUI();
+  render();
+  scheduleSave();
+  showToast("最初の形にもどしました");
 }
 
 function updateSelected(patch, addHistory = true) {
@@ -281,11 +550,17 @@ function updateInspector() {
   controls.classList.toggle("disabled", !shape);
 
   if (!shape) {
+    app.editMode = false;
+    app.addPointMode = false;
+    app.activePointIndex = null;
     preview.style.background = "#dce2ee";
     preview.style.transform = "none";
     preview.style.borderRadius = "9px";
+    updateEditUI();
     return;
   }
+
+  ensureShapeGeometry(shape);
 
   document.querySelector("#sizeSlider").value = Math.round(shape.size);
   document.querySelector("#rotationSlider").value = Math.round((shape.rotation + 360) % 360);
@@ -301,6 +576,7 @@ function updateInspector() {
   document.querySelectorAll(".swatch").forEach((button) => {
     button.classList.toggle("active", button.dataset.color.toLowerCase() === shape.color.toLowerCase());
   });
+  updateEditUI();
 }
 
 function selectColor(color) {
@@ -328,7 +604,13 @@ function duplicateSelected() {
   const shape = getSelectedShape();
   if (!shape) return;
   pushHistory();
-  const duplicate = { ...shape, id: uid(), x: shape.x + 45, y: shape.y + 45 };
+  const duplicate = {
+    ...shape,
+    id: uid(),
+    x: shape.x + 45,
+    y: shape.y + 45,
+    points: shape.points.map((point) => ({ ...point })),
+  };
   activePlan().shapes.push(duplicate);
   activePlan().selectedId = duplicate.id;
   render();
@@ -343,6 +625,7 @@ function deleteSelected() {
   pushHistory();
   plan.shapes.splice(index, 1);
   plan.selectedId = null;
+  exitShapeEditing(false);
   render();
   updateInspector();
   scheduleSave();
@@ -350,6 +633,7 @@ function deleteSelected() {
 
 function switchPlan(planKey) {
   saveReflectionFields();
+  exitShapeEditing(false);
   app.activePlan = planKey;
   document.querySelector("#planAButton").classList.toggle("active", planKey === "A");
   document.querySelector("#planBButton").classList.toggle("active", planKey === "B");
@@ -401,7 +685,9 @@ function loadSaved() {
       app.plans[key] = {
         ...createBlankPlan(),
         background: saved.plans[key].background || "#ffffff",
-        shapes: Array.isArray(saved.plans[key].shapes) ? saved.plans[key].shapes : [],
+        shapes: Array.isArray(saved.plans[key].shapes)
+          ? saved.plans[key].shapes.map((shape) => ensureShapeGeometry(shape))
+          : [],
         reflection: saved.plans[key].reflection || { feeling: "", idea: "" },
       };
     });
@@ -417,6 +703,7 @@ function clearPlan() {
   pushHistory();
   plan.shapes = [];
   plan.selectedId = null;
+  exitShapeEditing(false);
   render();
   updateInspector();
   scheduleSave();
@@ -509,6 +796,18 @@ function bindEvents() {
   document.querySelector("#undoButton").addEventListener("click", undo);
   document.querySelector("#redoButton").addEventListener("click", redo);
   document.querySelector("#clearButton").addEventListener("click", clearPlan);
+  document.querySelector("#editShapeButton").addEventListener("click", enterShapeEditing);
+  document.querySelector("#doneEditingButton").addEventListener("click", () => exitShapeEditing());
+  document.querySelector("#smoothButton").addEventListener("click", () => setEdgeStyle(true));
+  document.querySelector("#angularButton").addEventListener("click", () => setEdgeStyle(false));
+  document.querySelector("#addPointButton").addEventListener("click", () => {
+    app.addPointMode = !app.addPointMode;
+    app.activePointIndex = null;
+    updateEditUI();
+    render();
+  });
+  document.querySelector("#deletePointButton").addEventListener("click", deleteActivePoint);
+  document.querySelector("#resetShapeButton").addEventListener("click", resetSelectedShape);
   document.querySelector("#duplicateButton").addEventListener("click", duplicateSelected);
   document.querySelector("#deleteButton").addEventListener("click", deleteSelected);
   document.querySelector("#frontButton").addEventListener("click", () => moveLayer("front"));
@@ -532,16 +831,20 @@ function bindEvents() {
     const shape = getSelectedShape();
     if ((event.key === "Delete" || event.key === "Backspace") && shape && !event.target.matches("input, textarea")) {
       event.preventDefault();
-      deleteSelected();
+      if (app.editMode && app.activePointIndex !== null) deleteActivePoint();
+      else if (!app.editMode) deleteSelected();
     }
     if (shape && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
       pushHistory();
       const amount = event.shiftKey ? 20 : 5;
-      if (event.key === "ArrowUp") shape.y -= amount;
-      if (event.key === "ArrowDown") shape.y += amount;
-      if (event.key === "ArrowLeft") shape.x -= amount;
-      if (event.key === "ArrowRight") shape.x += amount;
+      const target = app.editMode && app.activePointIndex !== null
+        ? shape.points[app.activePointIndex]
+        : shape;
+      if (event.key === "ArrowUp") target.y -= amount;
+      if (event.key === "ArrowDown") target.y += amount;
+      if (event.key === "ArrowLeft") target.x -= amount;
+      if (event.key === "ArrowRight") target.x += amount;
       render();
       scheduleSave();
     }
