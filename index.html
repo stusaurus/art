@@ -86,6 +86,9 @@
         </div>
 
         <div class="canvas-stage" id="canvasStage">
+          <div class="edit-mode-label" id="editModeLabel" hidden>
+            <span></span>形を変えるモード
+          </div>
           <canvas id="artCanvas" width="1000" height="1000" aria-label="形を配置する正方形のキャンバス"></canvas>
           <p class="canvas-tip" id="canvasTip">形をタップして追加し、指で動かせます</p>
         </div>
@@ -110,6 +113,33 @@
           </div>
 
           <div class="control-group disabled" id="shapeControls">
+            <button class="edit-shape-button" id="editShapeButton" type="button">
+              <span aria-hidden="true">✦</span>
+              輪郭を変えてオリジナルにする
+            </button>
+
+            <div class="shape-edit-tools" id="shapeEditTools" hidden>
+              <div class="edit-tools-heading">
+                <div>
+                  <strong>青い点を指で動かそう</strong>
+                  <span>輪郭を好きな形に変えられます</span>
+                </div>
+                <button id="doneEditingButton" type="button">できた</button>
+              </div>
+
+              <span class="mini-label">線のつながり方</span>
+              <div class="edge-style-buttons" role="group" aria-label="輪郭のつながり方">
+                <button id="smoothButton" type="button">なめらか</button>
+                <button id="angularButton" type="button">カクカク</button>
+              </div>
+
+              <div class="point-actions">
+                <button id="addPointButton" type="button">＋ 点を増やす</button>
+                <button id="deletePointButton" type="button" disabled>− 選んだ点を消す</button>
+              </div>
+              <button class="reset-shape-button" id="resetShapeButton" type="button">最初の形にもどす</button>
+            </div>
+
             <label class="range-control">
               <span><b>大きさ</b><output id="sizeOutput">100%</output></span>
               <input id="sizeSlider" type="range" min="30" max="220" value="100" />
