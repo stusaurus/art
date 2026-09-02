@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2457d6" />
+    <meta
+      name="description"
+      content="色と形を組み合わせ、感じ方の違いを比べる小学校高学年向け図工アプリ"
+    />
+    <title>いろ・かたち構成ラボ</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div>
+          <h1>いろ・かたち構成ラボ</h1>
+          <p>色と形で「感じ」をつくろう</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button class="button button-light" id="compareButton" type="button">A/Bをくらべる</button>
+        <button class="button button-yellow" id="downloadButton" type="button">画像を保存</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel tools-panel" aria-label="形と色の道具">
+        <section class="panel-section challenge-section">
+          <div class="section-heading">
+            <span class="step-number">1</span>
+            <h2>今日のお題</h2>
+          </div>
+          <button class="challenge-card" id="challengeButton" type="button" aria-label="次のお題を表示">
+            <span class="challenge-label">感じを表そう</span>
+            <strong id="challengeTitle">スピード</strong>
+            <span id="challengeHint">ななめの形を使ってみよう</span>
+            <span class="challenge-next">次のお題 →</span>
+          </button>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
+            <span class="step-number">2</span>
+            <h2>形をえらぶ</h2>
+          </div>
+          <div class="shape-grid" role="group" aria-label="追加する形">
+            <button class="shape-button" data-shape="circle" type="button"><span class="shape-icon circle"></span>まる</button>
+            <button class="shape-button" data-shape="square" type="button"><span class="shape-icon square"></span>しかく</button>
+            <button class="shape-button" data-shape="triangle" type="button"><span class="shape-icon triangle"></span>さんかく</button>
+            <button class="shape-button" data-shape="line" type="button"><span class="shape-icon line"></span>せん</button>
+            <button class="shape-button wide" data-shape="blob" type="button"><span class="shape-icon blob"></span>ふしぎな形</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
+            <span class="step-number">3</span>
+            <h2>色をえらぶ</h2>
+          </div>
+          <div class="swatches" id="swatches" aria-label="色のパレット"></div>
+          <label class="custom-color">
+            <span>ほかの色</span>
+            <input id="colorPicker" type="color" value="#2457d6" />
+          </label>
+        </section>
+      </aside>
+
+      <section class="canvas-column" aria-label="制作する場所">
+        <div class="plan-bar">
+          <div class="plan-tabs" role="tablist" aria-label="作品Aと作品B">
+            <button class="plan-tab active" id="planAButton" role="tab" aria-selected="true" type="button">作品 A</button>
+            <button class="plan-tab" id="planBButton" role="tab" aria-selected="false" type="button">作品 B</button>
+          </div>
+          <div class="history-actions">
+            <button class="icon-button" id="undoButton" type="button" title="もとにもどす" aria-label="もとにもどす">↶</button>
+            <button class="icon-button" id="redoButton" type="button" title="やりなおす" aria-label="やりなおす">↷</button>
+            <button class="text-button" id="clearButton" type="button">全部消す</button>
+          </div>
+        </div>
+
+        <div class="canvas-stage" id="canvasStage">
+          <canvas id="artCanvas" width="1000" height="1000" aria-label="形を配置する正方形のキャンバス"></canvas>
+          <p class="canvas-tip" id="canvasTip">形をタップして追加し、指で動かせます</p>
+        </div>
+
+        <div class="canvas-bottom">
+          <label class="background-control">
+            <span>背景の色</span>
+            <input id="backgroundPicker" type="color" value="#ffffff" />
+          </label>
+          <p><span class="status-dot"></span><span id="saveStatus">この端末に自動保存</span></p>
+        </div>
+      </section>
+
+      <aside class="panel inspector-panel" aria-label="選んだ形の調整と振り返り">
+        <section class="panel-section selection-section">
+          <div class="selection-title-row">
+            <div>
+              <span class="eyebrow">選んだ形</span>
+              <h2 id="selectedShapeName">まだありません</h2>
+            </div>
+            <span class="selection-preview" id="selectionPreview" aria-hidden="true"></span>
+          </div>
+
+          <div class="control-group disabled" id="shapeControls">
+            <label class="range-control">
+              <span><b>大きさ</b><output id="sizeOutput">100%</output></span>
+              <input id="sizeSlider" type="range" min="30" max="220" value="100" />
+            </label>
+            <label class="range-control">
+              <span><b>かたむき</b><output id="rotationOutput">0°</output></span>
+              <input id="rotationSlider" type="range" min="0" max="359" value="0" />
+            </label>
+            <label class="range-control">
+              <span><b>すけ方</b><output id="opacityOutput">100%</output></span>
+              <input id="opacitySlider" type="range" min="20" max="100" value="100" />
+            </label>
+
+            <div class="object-actions">
+              <button id="duplicateButton" type="button">複製</button>
+              <button id="frontButton" type="button">一番前へ</button>
+              <button id="backButton" type="button">一番後ろへ</button>
+              <button class="danger" id="deleteButton" type="button">削除</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section reflection-section">
+          <div class="section-heading reflection-heading">
+            <span class="step-number dark">4</span>
+            <h2>ことばにしよう</h2>
+          </div>
+          <label>
+            <span>どんな感じを表した？</span>
+            <input id="reflectionFeeling" type="text" maxlength="40" placeholder="例：風が速く動く感じ" />
+          </label>
+          <label>
+            <span>どんな工夫をした？</span>
+            <textarea id="reflectionIdea" maxlength="100" rows="3" placeholder="色・形・重なり方に注目して書こう"></textarea>
+          </label>
+          <div class="notice-box">
+            <span aria-hidden="true">!</span>
+            <p>上手・下手の点数はつきません。作品AとBのちがいを楽しもう。</p>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <dialog id="compareDialog" class="compare-dialog">
+      <div class="dialog-header">
+        <div>
+          <span class="eyebrow">見くらべて発見</span>
+          <h2>作品Aと作品B</h2>
+        </div>
+        <button class="close-button" id="closeCompareButton" type="button" aria-label="閉じる">×</button>
+      </div>
+      <div class="compare-grid">
+        <figure>
+          <figcaption>作品 A</figcaption>
+          <canvas id="compareCanvasA" width="1000" height="1000"></canvas>
+        </figure>
+        <figure>
+          <figcaption>作品 B</figcaption>
+          <canvas id="compareCanvasB" width="1000" height="1000"></canvas>
+        </figure>
+      </div>
+      <div class="compare-question">
+        <strong>見た感じは、どう変わった？</strong>
+        <p>色・形・大きさ・重なり方のちがいを見つけよう。</p>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
